@@ -10,7 +10,6 @@ module adder8 (
   
   sig sum[8]; // sum
   sig xb[8];  // xb
-  
 
   always {
     xb = b ^ 8x{alufn[0]}; // xb = XOR(B,alufn[0])
@@ -24,6 +23,5 @@ module adder8 (
   n = sum[7];                                                  // return true when S is negative
   z = ~|sum;                                                   // return true when S outputs are all zero
   out = sum;                                                   // return sum as out 
-    
 }
 }
