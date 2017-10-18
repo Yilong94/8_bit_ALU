@@ -1,0 +1,16 @@
+module boolean8 ( 
+    input alufn[6],
+    input a[8],
+    input b[8],
+    output out[8]
+  ) {
+  always {
+      case(alufn[3:0]) {
+        b1000: out = a & b; // return bitwise operation of AND
+        b1110: out = a | b; // return bitwise operation of OR    
+        b0110: out = a ^ b; // return bitwise operation of XOR      
+        b1010: out = a;     // return bits of input "A"   
+        default: out = 8d0;
+        } 
+    }
+}

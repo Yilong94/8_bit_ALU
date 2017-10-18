@@ -1,0 +1,17 @@
+module compare8 (
+    input alufn[6],
+    input z,        // from adder module
+    input v,        // from adder module
+    input n,        // from adder module
+    output out[8]
+
+  ) {
+  always {
+    case(alufn[2:1]){
+    2b01: out = z;       // return true when a == b
+    2b10: out = n^v;     // return true when a < b
+    2b11: out = z|(n^v); // return true when a <= b
+    default: out =0;
+    }
+  }
+}

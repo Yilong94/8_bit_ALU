@@ -1,0 +1,18 @@
+module shifter8 (
+    input a[8],
+    input b[8],
+    input alufn[6],
+    output out[8]
+  ) {
+  always {
+    case(alufn[1:0]) {
+      //to do left shift 
+      b00:out = a <<< b[2-:3];
+      //to do right shift   
+      b01:out = a >>> b[2-:3];
+      //to do right shift signed  
+      b11:out = $signed(a) >>> b[2-:3];
+      default:out = 0;
+    }
+  }
+}

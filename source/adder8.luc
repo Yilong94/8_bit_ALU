@@ -1,0 +1,29 @@
+module adder8 (
+    input alufn[6],
+    input a[8],  
+    input b[8],  
+    output out[8],  
+    output z,       
+    output n,       
+    output v     
+  ) {
+  
+  sig sum[8]; // sum
+  sig xb[8];  // xb
+  
+
+  always {
+    xb = b ^ 8x{alufn[0]}; // xb = XOR(B,alufn[0])
+    case(alufn[1:0]){
+    2b00:sum = a+b;     // sum
+    2b01:sum = a-b;     // sub
+    2b10:sum = a*b;     // multiplication
+    default:sum = a-b;  // default case to be 0
+  }
+  v = (a[7] & xb[7] & ~sum[7]) | (~a[7] & ~xb[7] & sum[7]);    // return true when overflows in addition
+  n = sum[7];                                                  // return true when S is negative
+  z = ~|sum;                                                   // return true when S outputs are all zero
+  out = sum;                                                   // return sum as out 
+    
+}
+}

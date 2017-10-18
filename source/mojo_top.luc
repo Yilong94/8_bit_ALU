@@ -1,0 +1,628 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  
+  sig rst;                  // reset signal
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    .rst(rst){
+      //counter is used to cycle through different states. use smaller bits for shorter period in each state
+      dff counter[30]; 
+      //fsm states to run test
+      fsm state = {START, ADDERTEST1, ADDERTEST2, ADDERTEST3, ADDERTEST4, ADDERTEST5, ADDERTESTERROR, ADDERERROR,
+                           BOOLEANTEST1, BOOLEANTEST2, BOOLEANTEST3, BOOLEANTEST4, BOOLEANTESTERROR, BOOLEANERROR, 
+                           SHIFTTEST1, SHIFTTEST2, SHIFTTEST3, SHIFTTESTERROR, SHIFTERROR,
+                           COMPTEST1, COMPTEST2, COMPTEST3, COMPTEST4, COMPTEST5, COMPTEST6, COMPTESTERROR, COMPERROR,
+                           END};
+      //initialize multi seven seg to show numbers
+      multi_seven_seg seg;
+      }
+  }
+  
+  //define intermediate signals
+  sig a[8];
+  sig b[8];
+  sig alufn[6];
+  sig alu[8];
+  const X =29;
+  
+  //initializes the alu
+  alu alu1;
+  
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    
+    led = 8h00;             // turn LEDs off
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    
+    io_led = 3x{{8h00}};    // turn LEDs off
+    io_seg = 8hff;          // turn segments off
+    io_sel = 4hf;           // select no digits
+    
+    //connect dip to intermediate variables
+    a = io_dip[0];
+    b = io_dip[1];
+    alufn = io_dip[2][5:0];
+    
+    //connect the alu inputs to intermediate variables
+    alu1.a = a;
+    alu1.b = b;
+    alu1.alufn = alufn;
+    
+    //connect the alu outputs to intermediate variable
+    alu = alu1.alu_output;
+    
+    //connect led to intermediate variable
+    io_led[2] = alu;
+    
+    //connect led to copy input values
+    io_led[0] = a;
+    io_led[1] = b;
+    
+    seg.values = {4he, 4he, 4he, 4he}; //to initialize the values for 7segment
+    
+    //FSM TEST CASES
+    case(state.q){
+      //START STATE
+      state.START:
+        //clock counter is 0 at start state
+        counter.d = 0;
+        //display 'S---' to indicate START STATE
+        seg.values = {4hd, 4he, 4he, 4he};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        //press the center button to start
+        if(io_button[1]==1){ 
+          state.d = state.ADDERTEST1;
+        }
+      
+      //ADDER TEST 1
+      // a=-128, b=-127, alufn[0]=0, output=-128+(-127)=-255 
+      state.ADDERTEST1:
+        alu1.alufn = 6b0;
+        alu1.a = 8b10000000;
+        alu1.b = 8b10000001;
+        //inputs light up as led
+        io_led[0] = 8b10000000;                  
+        io_led[1] = 8b10000001;                      
+        alu = alu1.alu_output;
+        //increment clock counter 
+        counter.d = counter.q+1;
+        //display 'AAA1' to indicate ADDER TEST 1
+        seg.values = {4ha, 4ha, 4ha, 4h1};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        //if bit30 of counter == 1 and output is correct result  
+        if(counter.q[X]==1&&alu==8b00000001){
+          //reset counter for the next state
+          counter.d = 0;
+          //move to the next state
+          state.d = state.ADDERTEST2;
+        }else if(counter.q[X]==1&&alu!=8b00000001){
+          //reset counter for the error state
+          counter.d = 0;
+          //move to the error state
+          state.d = state.ADDERERROR;  
+        }
+      
+      //ADDER TEST 2
+      // a = -128 , b = -127, alufn[0] =1 , output = -128-(-127) = -1 
+      state.ADDERTEST2:
+        alu1.alufn = 6b1;
+        alu1.a = 8b10000000;
+        alu1.b = 8b10000001;
+        io_led[0] = 8b10000000;
+        io_led[1] = 8b10000001;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4ha, 4ha, 4ha, 4h2};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11111111){
+          counter.d = 0;
+          state.d = state.ADDERTEST3;
+        }else if(counter.q[X]==1&&alu!=8b11111111){
+          counter.d = 0;
+          state.d = state.ADDERERROR;
+        }
+      
+      //ADDER TEST 3
+      //a = 2, b = 90, alufn[0] = 0, output = 2+90 = 92
+      state.ADDERTEST3:
+        alu1.alufn = 6b0;
+        alu1.a = 8b00000010;
+        alu1.b = 8b01011010;
+        io_led[0] = 8b00000010;
+        io_led[1] = 8b01011010;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4ha, 4ha, 4ha, 4h3};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b01011100){
+          counter.d = 0;
+          state.d = state.ADDERTEST4;
+        }else if(counter.q[X]==1&&alu!=8b01011100){
+          counter.d = 0;
+          state.d = state.ADDERERROR;
+        }  
+      
+      //ADDER TEST 4
+      //a = 127, b = 127, alufn[0] = 0, output = 127 + 127 = 254;
+      state.ADDERTEST4:
+        alu1.alufn = 6b0;
+        alu1.a = 8b01111111;
+        alu1.b = 8b01111111;
+        io_led[0] = 8b01111111;
+        io_led[1] = 8b01111111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4ha, 4ha, 4ha, 4h4};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11111110){
+          counter.d = 0;
+          state.d = state.ADDERTEST5;
+        }else if(counter.q[X]==1&&alu!=8b11111110){
+          counter.d = 0;
+          state.d = state.ADDERERROR;
+        }   
+      
+      //ADDER TEST 5
+      //a = 3, b = 3, alufn[1:0] = 2b10. output = 3*3 = 9 ;
+      state.ADDERTEST5:
+        alu1.alufn = 6b10;
+        alu1.a = 8b00000011;
+        alu1.b = 8b00000011;
+        io_led[0] = 8b00000011;
+        io_led[1] = 8b00000011;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4ha, 4ha, 4ha, 4h5};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b00001001){
+          counter.d = 0;
+          state.d = state.ADDERTESTERROR;
+        }else if(counter.q[X]==1&&alu!=8b00001001){
+          counter.d = 0;
+          state.d = state.ADDERERROR;
+        }
+      
+      //ADDER TEST ERROR
+      //a = 5, b = 4, alufn[1:0] = 2b00. output = 5+4 = 9 ;
+      state.ADDERTESTERROR:
+        alu1.alufn = 6b0;
+        alu1.a = 8b00000101+8b00000001; //intentional error of +1
+        alu1.b = 8b00000100;
+        io_led[0] = 8b00000101;
+        io_led[1] = 8b00000100;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4ha, 4ha, 4ha, 4h6};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b00001001){
+          counter.d = 0;
+          state.d = state.BOOLEANTEST1;
+        }else if(counter.q[X]==1&&alu!=8b00001001){
+          counter.d = 0;
+          state.d = state.ADDERERROR;
+        }           
+            
+      //ADDER ERROR 
+      state.ADDERERROR:
+        counter.d = counter.q+1;
+        seg.values = {4ha, 4he, 4he, 4hf};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.BOOLEANTEST1;
+          }
+      
+      //BOOLEAN TEST 1 ('A')
+      //a = 8b11111000, b = 8b00011111, alufn[3:0] = 4b1010, output = 8b11111000  
+      state.BOOLEANTEST1:
+        alu1.alufn = 6b011010;
+        alu1.a = 8b11111000;
+        alu1.b = 8b00011111;
+        io_led[0] = 8b11111000;
+        io_led[1] = 8b00011111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hb, 4hb, 4hb, 4h1};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11111000){
+          counter.d = 0;
+          state.d = state.BOOLEANTEST2;
+        }else if(counter.q[X]==1&&alu!=8b11111000){
+          counter.d = 0;
+          state.d = state.BOOLEANERROR;
+        }
+        
+      //BOOLEAN TEST 2 (AND)
+      //a = 8b11111000, b = 8b00011111, alufn[3:0] = 4b1000, output = 8b00011000  
+      state.BOOLEANTEST2:
+        alu1.alufn = 6b011000;
+        alu1.a = 8b11111000;
+        alu1.b = 8b00011111;
+        io_led[0] = 8b11111000;
+        io_led[1] = 8b00011111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hb, 4hb, 4hb, 4h2};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b00011000){
+          counter.d = 0;
+          state.d = state.BOOLEANTEST3;
+        }else if(counter.q[X]==1&&alu!=8b00011000){
+          counter.d = 0;
+          state.d = state.BOOLEANERROR;
+        }
+        
+      //BOOLEAN TEST 3 (OR)
+      //a = 8b11111000, b = 8b00011111, alufn[3:0] = 4b1110, output = 8b11111111
+      state.BOOLEANTEST3:
+        alu1.alufn = 6b011110;
+        alu1.a = 8b11111000;
+        alu1.b = 8b00011111;
+        io_led[0] = 8b11111000;
+        io_led[1] = 8b00011111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hb, 4hb, 4hb, 4h3};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11111111){
+          counter.d = 0;
+          state.d = state.BOOLEANTEST4;
+        }else if(counter.q[X]==1&&alu!=8b11111111){
+          counter.d = 0;
+          state.d = state.BOOLEANERROR;
+        }  
+      
+      //BOOLEAN TEST 4 (XOR)
+      //a = 8b11111000, b = 8b00011111, alufn[3:0] = 4b0110, output = 8b11100111
+      state.BOOLEANTEST4:
+        alu1.alufn = 6b010110;
+        alu1.a = 8b11111000;
+        alu1.b = 8b00011111;
+        io_led[0] = 8b11111000;
+        io_led[1] = 8b00011111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hb, 4hb, 4hb, 4h4};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11100111){
+          counter.d = 0;
+          state.d = state.BOOLEANTESTERROR;
+        }else if(counter.q[X]==1&&alu!=8b11100111){
+          counter.d = 0;
+          state.d = state.BOOLEANERROR;
+        }
+        
+      //BOOLEAN TEST ERROR
+      //a = 8b11111000, b = 8b00011111, alufn[3:0] = 4b0110, output = 8b11100111
+      state.BOOLEANTESTERROR:
+        alu1.alufn = 6b010110;
+        alu1.a = 8b11111000+8b00000001; //intentional error of +1
+        alu1.b = 8b00011111;
+        io_led[0] = 8b11111000;
+        io_led[1] = 8b00011111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hb, 4hb, 4hb, 4h5};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11100111){
+          counter.d = 0;
+          state.d = state.SHIFTTEST1;
+        }else if(counter.q[X]==1&&alu!=8b11100111){
+          counter.d = 0;
+          state.d = state.BOOLEANERROR;
+        }        
+          
+      //BOOLEAN ERROR
+      state.BOOLEANERROR:
+        counter.d = counter.q+1;
+        seg.values = {4hb, 4he, 4he, 4hf};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.SHIFTTEST1;
+          }
+        
+      //SHIFT TEST 1 (shift left)
+      //a = 8b0100000, b = 8b00000001, alufn[1:0] = 00, output = 8b10000000  
+      state.SHIFTTEST1:
+        alu1.alufn = 6b100000;
+        alu1.a = 8b01000000;
+        alu1.b = 8b00000001;
+        io_led[0] = 8b01000000;
+        io_led[1] = 8b00000001;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hd, 4hd, 4hd, 4h1};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b10000000){
+          counter.d = 0;
+          state.d = state.SHIFTTEST2;
+        }else if(counter.q[X]==1&&alu!=8b10000000){
+          counter.d = 0;
+          state.d = state.SHIFTERROR;
+        }
+        
+      //SHIFT TEST 2 (shift right)
+      //a = 8b11110000, b = 8b00000100, alufn[1:0] = 01, output = 8b00001111  
+      state.SHIFTTEST2:
+        alu1.alufn = 6b100001;
+        alu1.a = 8b11110000;
+        alu1.b = 8b00000100;
+        io_led[0] = 8b11110000;
+        io_led[1] = 8b00000100;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hd, 4hd, 4hd, 4h2};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b00001111){
+          counter.d = 0;
+          state.d = state.SHIFTTEST3;
+        }else if(counter.q[X]==1&&alu!=8b00001111){
+          counter.d = 0;
+          state.d = state.SHIFTERROR;
+        }  
+      
+      //SHIFT TEST 3 (shift right arithmetic)
+      //a = 8b11110000, b = 8b00000100, alufn[1:0] = 11, output = 8b11111111  
+      state.SHIFTTEST3:
+        alu1.alufn = 6b100011;
+        alu1.a = 8b11110000;
+        alu1.b = 8b00000100;
+        io_led[0] = 8b11110000;
+        io_led[1] = 8b00000100;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hd, 4hd, 4hd, 4h3};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11111111){
+          counter.d = 0;
+          state.d = state.SHIFTTESTERROR;
+        }else if(counter.q[X]==1&&alu!=8b11111111){
+          counter.d = 0;
+          state.d = state.SHIFTERROR;
+        }
+        
+      //SHIFT TEST ERROR
+      //a = 8b11110000, b = 8b00000001, alufn[1:0] = 00, output = 8b11100000
+      state.SHIFTTESTERROR:
+        alu1.alufn = 6b100011;
+        alu1.a = 8b11110000 + 8b00000001; //intentional error of +1
+        alu1.b = 8b00000001;
+        io_led[0] = 8b11110000;
+        io_led[1] = 8b00000001;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hd, 4hd, 4hd, 4h4};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b11100000){
+          counter.d = 0;
+          state.d = state.COMPTEST1;
+        }else if(counter.q[X]==1&&alu!=8b11100000){
+          counter.d = 0;
+          state.d = state.SHIFTERROR;
+        }      
+          
+      //SHIFT ERROR
+      state.SHIFTERROR: 
+        counter.d = counter.q+1;
+        seg.values = {4hd, 4he, 4he, 4hf};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.COMPTEST1;
+          }
+      
+      //COMP TEST 1
+      //a = 127, b = 127, alufn[2:1] = 2b01, output = 1 since a==b
+      state.COMPTEST1:
+        alu1.alufn = 6b110011; 
+        alu1.a = 8b01111111;
+        alu1.b = 8b01111111;
+        io_led[0] = 8b01111111;
+        io_led[1] = 8b01111111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h1};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b1){
+          counter.d = 0;
+          state.d = state.COMPTEST2;
+        }else if(counter.q[X]==1&&alu!=8b1){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }
+      
+      //COMP TEST 2
+      //a = 127, b = 126, alufn[2:1] = 2b01, output = 0 since a!=b
+      state.COMPTEST2:
+        alu1.alufn = 6b110011; 
+        alu1.a = 8b01111111;
+        alu1.b = 8b01111110;
+        io_led[0] = 8b01111111;
+        io_led[1] = 8b01111110;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h2};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b0){
+          counter.d = 0;
+          state.d = state.COMPTEST3;
+        }else if(counter.q[X]==1&&alu!=8b0){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }
+      
+      //COMP TEST 3
+      //a = 127, b = 126, alufn[2:1] = 2b10, output = 0 since a not <b
+      state.COMPTEST3:
+        alu1.alufn = 6b110101; 
+        alu1.a = 8b01111111;
+        alu1.b = 8b01111110;
+        io_led[0] = 8b01111111;
+        io_led[1] = 8b01111110;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h3};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b0){
+          counter.d = 0;
+          state.d = state.COMPTEST4;
+        }else if(counter.q[X]==1&&alu!=8b0){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }
+        
+      //COMP TEST 4
+      //a = 126, b = 127, alufn[2:1] = 2b10, output = 1 since a<b
+      state.COMPTEST4:
+        alu1.alufn = 6b110101; 
+        alu1.a = 8b01111110;
+        alu1.b = 8b01111111;
+        io_led[0] = 8b01111110;
+        io_led[1] = 8b01111111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h4};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b1){
+          counter.d = 0;
+          state.d = state.COMPTEST5;
+        }else if(counter.q[X]==1&&alu!=8b1){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }         
+      
+      //COMP TEST 5
+      //a = 126, b = 127, alufn[2:1] = 2b11, output = 1 since a<=b
+      state.COMPTEST5:
+        alu1.alufn = 6b110111; 
+        alu1.a = 8b01111110;
+        alu1.b = 8b01111111;
+        io_led[0] = 8b01111110;
+        io_led[1] = 8b01111111;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h5};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b1){
+          counter.d = 0;
+          state.d = state.COMPTEST6;
+        }else if(counter.q[X]==1&&alu!=8b1){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }
+      
+      //COMP TEST 6
+      //a = 127, b = 126, alufn[2:1] = 2b11, output = 0 since a not <=b
+      state.COMPTEST6:
+        alu1.alufn = 6b110111; 
+        alu1.a = 8b01111111;
+        alu1.b = 8b01111110;
+        io_led[0] = 8b01111111;
+        io_led[1] = 8b01111110;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h6};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b0){
+          counter.d = 0;
+          state.d = state.COMPTESTERROR;
+        }else if(counter.q[X]==1&&alu!=8b0){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }
+        
+      //COMP TEST ERROR
+      //a = 126, b = 126, alufn[2:1] = 2b01, output = 1 since a==b
+      state.COMPTESTERROR:
+        alu1.alufn = 6b110011; 
+        alu1.a = 8b01111110 + 8b00000001; //intentional error of +1
+        alu1.b = 8b01111110;
+        io_led[0] = 8b01111110;
+        io_led[1] = 8b01111110;
+        alu = alu1.alu_output;
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4hc, 4hc, 4h7};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1&&alu==8b1){
+          counter.d = 0;
+          state.d = state.END;
+        }else if(counter.q[X]==1&&alu!=8b1){
+          counter.d = 0;
+          state.d = state.COMPERROR;
+        }           
+        
+      //COMP ERROR
+      state.COMPERROR:
+        counter.d = counter.q+1;
+        seg.values = {4hc, 4he, 4he, 4hf};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.END;
+        }
+      
+      //END STATE          
+      state.END:
+        counter.d = counter.q+1;
+        seg.values = {4hf, 4he, 4he, 4he};
+        io_seg = ~seg.seg;
+        io_sel = ~seg.sel;
+        if(counter.q[X]==1){
+          counter.d = 0;
+          //return back to start state
+          state.d = state.START;
+          }
+    }
+  }
+}

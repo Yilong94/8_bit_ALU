@@ -1,0 +1,46 @@
+module alu (
+    //inputs into ALU from mojo_top
+    input alufn[6],
+    input a[8],
+    input b[8],
+    //outputs from ALU into mojo_top
+    output alu_output[8]
+  ) {
+  //define the modules of ALU
+  adder8 add;
+  shifter8 shift;
+  boolean8 bool;
+  compare8 comp;
+  
+  always {
+    //initialize inputs of adder module
+    add.a=a;
+    add.b=b;
+    add.alufn=alufn;
+    
+    //initialize inputs of compare module
+    comp.v=add.v;
+    comp.n=add.n;
+    comp.z=add.z;
+    comp.alufn=alufn;
+    
+    //initialize inputs of boolean module
+    bool.a=a;
+    bool.b=b;
+    bool.alufn=alufn;
+    
+    //initialize inputs of shifter module
+    shift.a=a;
+    shift.b=b;
+    shift.alufn=alufn;
+    
+    //Using a multiplexer to select
+    case(alufn[5:4]){
+      2b00:alu_output=add.out;
+      2b01:alu_output=bool.out;
+      2b10:alu_output=shift.out;
+      2b11:alu_output=comp.out;  
+      default:alu_output=8b0;
+    }
+  }
+}
